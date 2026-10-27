@@ -230,9 +230,9 @@ function focus(){
     points.forEach(p=>{[p.x,p.y,p.z].forEach((v,i)=>{min[i]=Math.min(min[i],v);max[i]=Math.max(max[i],v)})});
     const center={x:(min[0]+max[0])/2,y:(min[1]+max[1])/2,z:(min[2]+max[2])/2};
     const diameter=Math.max(...max.map((x,i)=>x-min[i]),12);
-    viewer.setCameraParameters({fov:35});
-    viewer.zoomTo();viewer.center(center);
-    viewer.zoom(Math.min(3,Math.max(0.5,40/diameter))*D.zoomFactor);
+    // Standard 3Dmol zoomTo uses an atom selection and avoids invalid coordinate selectors.
+    viewer.zoomTo(D.ligandText?{model:ligand.getID()}:sel);
+    viewer.zoom(D.zoomFactor);
   }else viewer.zoomTo();
   viewer.render();
 }
