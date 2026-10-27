@@ -9,7 +9,7 @@ from scipy.spatial import cKDTree
 
 st.set_page_config(page_title="Pan3D | Protein–Ligand Figure Studio", page_icon="🧬", layout="wide")
 st.title("Pan3D · Protein–Ligand Figure Studio")
-st.caption("Streamlit molecular figure editor · 3Dmol.js renderer · v0.5")
+st.caption("Streamlit molecular figure editor · 3Dmol.js renderer · v0.6")
 
 AMINO = set("ALA ARG ASN ASP CYS GLU GLN GLY HIS ILE LEU LYS MET PHE PRO SER THR TRP TYR VAL MSE".split())
 WATER = {"HOH", "WAT", "DOD"}
@@ -92,7 +92,10 @@ with st.sidebar:
     cartoon_opacity = st.slider("Protein cartoon opacity", 0.1, 1.0, 0.42, 0.05)
     ligand_radius = st.slider("Ligand stick radius (Å)", 0.08, 0.30, 0.16, 0.01)
     pocket_radius = st.slider("Pocket residue stick radius (Å)", 0.06, 0.24, 0.10, 0.01)
-    label_limit = st.slider("Maximum residue labels", 3, 35, 12)
+    label_limit = st.slider("Maximum residue labels", 3, 35, 10)
+    pocket_only = st.checkbox("Pocket-focus cartoon", True)
+    preserve_elements = st.checkbox("Element colors for ligand O/N/S", True)
+    label_offset = st.slider("Label outward offset (Å)", 0.0, 4.0, 1.5, 0.25)
     contact_radius = st.slider("Interaction dash thickness", 0.035, 0.14, 0.075, 0.005)
     export_scale = st.select_slider("PNG export scale", options=[1, 2, 3], value=2)
     st.caption("Final PNG is browser-rendered, not PyMOL ray-traced.")
@@ -125,6 +128,25 @@ except Exception as exc:
 ligand_name = st.selectbox("Select ligand", list(ligands))
 ligand_atoms = ligands[ligand_name]
 residues, contacts = nearby(protein, ligand_atoms, cutoff)
+# Rank labels by polar-contact proximity, then nearest atom distance.
+lig_xyz = np.array([[a["x"], a["y"], a["z"]] for a in ligand_atoms])
+ranking = {}
+for atom in protein:
+    if atom["residue"] not in residues:
+        continue
+    pos = np.array([atom["x"], atom["y"], atom["z"]])
+    distance = float(np.min(np.linalg.norm(lig_xyz - pos, axis=1)))
+    ranking[atom["residue"]] = min(distance, ranking.get(atom["residue"], float("inf")))
+polar_priority = set()
+for atom in protein:
+    if atom["residue"] in residues and atom["element"] in ("N", "O"):
+        xyz = np.array([atom["x"], atom["y"], atom["z"]])
+        for lig in ligand_atoms:
+            if lig["element"] in ("N", "O"):
+                dist = float(np.linalg.norm(xyz - [lig["x"], lig["y"], lig["z"]]))
+                if 2.2 <= dist <= 3.5:
+                    polar_priority.add(atom["residue"])
+residues.sort(key=lambda r: (r not in polar_priority, ranking.get(r, 999), r))
 st.caption(f"{len(protein):,} protein heavy atoms · {len(ligand_atoms)} ligand heavy atoms · {len(residues)} pocket residues · {len(contacts)} candidate proximity lines")
 
 # HTML rendering in an isolated Streamlit component. Molecular file contents are passed as JSON,
@@ -152,6 +174,9 @@ payload = {
     "pocketRadius": pocket_radius,
     "labelLimit": label_limit,
     "contactRadius": contact_radius,
+    "pocketOnly": pocket_only,
+    "preserveElements": preserve_elements,
+    "labelOffset": label_offset,
 }
 blob = json.dumps(payload).replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
 html = """
@@ -177,7 +202,14 @@ viewer=$3Dmol.createViewer(el,{backgroundColor:D.background,antialias:true});
 const protein=viewer.addModel(D.pdb,'pdb');
 const atoms=protein.selectedAtoms({});
 if(!atoms.length)throw Error('PDB could not be parsed by 3Dmol.js.');
-protein.setStyle({},{cartoon:{color:D.proteinColor,opacity:D.cartoonOpacity,style:'oval',arrows:true}});
+protein.setStyle({},{cartoon:{color:D.proteinColor,opacity:D.pocketOnly?0.15:D.cartoonOpacity,style:'oval',arrows:true}});
+if(D.pocketOnly) {
+  for(const entry of D.residues){
+    const [chain,number,resn]=entry.split(':');
+    protein.addStyle({chain,resi:parseInt(number,10),resn},{cartoon:{color:D.proteinColor,opacity:0.95,style:'oval',arrows:true}});
+  }
+}
+const elementColors={O:'#ec3030',N:'#365ae0',S:'#d8b036',P:'#e6a346',F:'#61a944'};
 const bits=String(D.selected).split(':');
 const sel={chain:bits[0],resi:parseInt(bits[1],10),resn:bits[2]};
 let ligand=protein;
@@ -185,22 +217,28 @@ if(D.ligandText){
   ligand=viewer.addModel(D.ligandText,D.ligandFormat==='mol2'?'mol2':'sdf');
   if(!ligand.selectedAtoms({}).length)throw Error('External ligand has no 3D atoms.');
   ligand.setStyle({},{stick:{radius:D.ligandRadius,color:D.ligandColor}});
+  if(D.preserveElements)for(const [elem,color] of Object.entries(elementColors))ligand.setStyle({elem},{stick:{radius:D.ligandRadius,color}});
 }else{
   if(!protein.selectedAtoms(sel).length)throw Error('Selected ligand not found: '+D.selected);
   // SetStyle on model is supported; addStyle belongs to the VIEWER.
-  viewer.addStyle(sel,{stick:{radius:0.24,color:D.ligandColor}});
+  viewer.addStyle(sel,{stick:{radius:D.ligandRadius,color:D.ligandColor}});
+  if(D.preserveElements)for(const [elem,color] of Object.entries(elementColors))viewer.addStyle({...sel,elem},{stick:{radius:D.ligandRadius,color}});
 }
 const labels=[];
 for(const entry of D.residues.slice(0,D.labelLimit)){
   const [chain,num,resn]=entry.split(':');
   const resi=parseInt(num,10);
   const rsel={chain,resi,resn};
-  if(D.showResidues)viewer.addStyle(rsel,{stick:{radius:D.pocketRadius}});
+  if(D.showResidues)protein.addStyle(rsel,{stick:{radius:D.pocketRadius}});
   if(D.showLabels){
     const a=atoms.find(t=>t.chain===chain && t.resi===resi && t.resn===resn && t.atom==='CA') ||
             atoms.find(t=>t.chain===chain && t.resi===resi && t.resn===resn);
     if(a){
-      labels.push({name:resn+num,at:a});
+      const cen=D.ligandCoordinates.reduce((s,p)=>({x:s.x+p.x,y:s.y+p.y,z:s.z+p.z}),{x:0,y:0,z:0});
+      for(const axis of ['x','y','z'])cen[axis]/=Math.max(1,D.ligandCoordinates.length);
+      const dx=a.x-cen.x,dy=a.y-cen.y,dz=a.z-cen.z,norm=Math.hypot(dx,dy,dz)||1;
+      const at={x:a.x+D.labelOffset*dx/norm,y:a.y+D.labelOffset*dy/norm,z:a.z+D.labelOffset*dz/norm};
+      labels.push({name:resn+num,at});
     }
   }
 }
