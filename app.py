@@ -163,11 +163,11 @@ else {
   if (data.showResidues) {
     for (const entry of data.residues) {
       const parts = entry.split(':');
-      model.addStyle({chain:parts[0],resi:parseInt(parts[1],10),resn:parts[2]}, {stick:{radius:0.14}});
+      viewer.addStyle({chain:parts[0],resi:parseInt(parts[1],10),resn:parts[2]}, {stick:{radius:0.14}});
     }
   }
   if (data.ligandText) ligandModel.setStyle({}, {stick:{radius:0.22,color:data.ligandColor}});
-  else model.addStyle(selection, {stick:{radius:0.22,color:data.ligandColor}});
+  else viewer.addStyle(selection, {stick:{radius:0.22,color:data.ligandColor}});
   if (data.showLabels) {
     const atoms = model.selectedAtoms({});
     for (const entry of data.residues) {
