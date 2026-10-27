@@ -206,7 +206,7 @@ protein.setStyle({},{cartoon:{color:D.proteinColor,opacity:D.pocketOnly?0.15:D.c
 if(D.pocketOnly) {
   for(const entry of D.residues){
     const [chain,number,resn]=entry.split(':');
-    protein.addStyle({chain,resi:parseInt(number,10),resn},{cartoon:{color:D.proteinColor,opacity:0.95,style:'oval',arrows:true}});
+    viewer.addStyle({chain,resi:parseInt(number,10),resn},{cartoon:{color:D.proteinColor,opacity:0.95,style:'oval',arrows:true}});
   }
 }
 const elementColors={O:'#ec3030',N:'#365ae0',S:'#d8b036',P:'#e6a346',F:'#61a944'};
@@ -229,7 +229,7 @@ for(const entry of D.residues.slice(0,D.labelLimit)){
   const [chain,num,resn]=entry.split(':');
   const resi=parseInt(num,10);
   const rsel={chain,resi,resn};
-  if(D.showResidues)protein.addStyle(rsel,{stick:{radius:D.pocketRadius}});
+  if(D.showResidues)viewer.addStyle(rsel,{stick:{radius:D.pocketRadius}});
   if(D.showLabels){
     const a=atoms.find(t=>t.chain===chain && t.resi===resi && t.resn===resn && t.atom==='CA') ||
             atoms.find(t=>t.chain===chain && t.resi===resi && t.resn===resn);
