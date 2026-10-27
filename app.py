@@ -9,7 +9,7 @@ from scipy.spatial import cKDTree
 
 st.set_page_config(page_title="Pan3D | Protein–Ligand Figure Studio", page_icon="🧬", layout="wide")
 st.title("Pan3D · Protein–Ligand Figure Studio")
-st.caption("Streamlit molecular figure editor · 3Dmol.js renderer · prototype v0.2")
+st.caption("Streamlit molecular figure editor · 3Dmol.js renderer · v0.3")
 
 AMINO = set("ALA ARG ASN ASP CYS GLU GLN GLY HIS ILE LEU LYS MET PHE PRO SER THR TRP TYR VAL MSE".split())
 WATER = {"HOH", "WAT", "DOD"}
@@ -137,16 +137,20 @@ payload = {
 blob = json.dumps(payload).replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
 html = """
 <div style="font:12px sans-serif;color:#64748b;padding:4px">Drag to rotate · Scroll to zoom · Right drag to pan</div>
-<div id="viewer" style="height:640px;width:100%;position:relative"></div>
+<div id="viewer" style="height:640px;width:100%;position:relative;background:#eef3f6;border:1px solid #cbd5e1"></div>
 <div style="margin:9px 0"><button id="reset">Recenter</button> <button id="export">Export PNG</button> <span id="msg" style="margin-left:10px;color:#64748b"></span></div>
-<script src="https://3Dmol.org/build/3Dmol-min.js"></script>
+<script src="https://3Dmol.org/build/3Dmol-min.js" onerror="document.getElementById('msg').textContent='3Dmol CDN loading failed; check network';"></script>
 <script>
 const data = __DATA__;
 const msg = document.getElementById('msg');
-if (typeof $3Dmol === 'undefined') { msg.textContent = '3Dmol.js failed to load. Internet access is required.'; }
+window.addEventListener('error', e => {msg.textContent='Pan3D rendering error: '+e.message;msg.style.color='crimson';});
+if (typeof $3Dmol === 'undefined') { msg.textContent = '3Dmol.js failed to load. Check network or browser extensions.'; }
 else {
+  try {
+  msg.textContent = 'Loading PDB atoms into 3D viewer...';
   const viewer = $3Dmol.createViewer(document.getElementById('viewer'), {backgroundColor: data.background, antialias:true});
   const model = viewer.addModel(data.pdb, 'pdb');
+  if (!model.selectedAtoms({}).length) throw new Error('3Dmol could not read PDB atoms');
   model.setStyle({}, {cartoon:{color:data.proteinColor}});
   let ligandModel = model, selection = {};
   if (data.ligandText) {
@@ -179,6 +183,7 @@ else {
     viewer.zoom(0.75); viewer.render();
   }
   center();
+  msg.textContent = 'Loaded: '+model.selectedAtoms({}).length+' atoms. Rotate the structure using your mouse.';
   document.getElementById('reset').onclick=center;
   document.getElementById('export').onclick=()=>{
     try {
@@ -187,6 +192,7 @@ else {
       document.body.appendChild(a);a.click();a.remove();
     }catch(e){msg.textContent='PNG export failed: '+e.message;}
   };
+  } catch(error) { msg.textContent='Pan3D rendering error: '+error.message;msg.style.color='crimson';console.error(error); }
 }
 </script>
 """.replace("__DATA__", blob)
