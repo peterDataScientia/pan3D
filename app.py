@@ -9,7 +9,7 @@ from scipy.spatial import cKDTree
 
 st.set_page_config(page_title="Pan3D | Protein–Ligand Figure Studio", page_icon="🧬", layout="wide")
 st.title("Pan3D · Protein–Ligand Figure Studio")
-st.caption("Streamlit molecular figure editor · 3Dmol.js renderer · v0.6")
+st.caption("Streamlit molecular figure editor · 3Dmol.js renderer · v0.7")
 
 AMINO = set("ALA ARG ASN ASP CYS GLU GLN GLY HIS ILE LEU LYS MET PHE PRO SER THR TRP TYR VAL MSE".split())
 WATER = {"HOH", "WAT", "DOD"}
@@ -88,12 +88,15 @@ with st.sidebar:
     st.header("3 · Figure style")
     figure_mode = st.toggle("Publication figure mode", value=True)
     label_size = st.slider("Residue label size", 10, 24, 16)
-    zoom_factor = st.slider("Camera zoom", 0.65, 2.0, 0.95, 0.05)
-    cartoon_opacity = st.slider("Protein cartoon opacity", 0.1, 1.0, 0.42, 0.05)
+    zoom_factor = st.slider("Camera zoom", 0.65, 1.4, 0.85, 0.05)
+    cartoon_opacity = st.slider("Protein cartoon opacity", 0.1, 1.0, 0.82, 0.05)
     ligand_radius = st.slider("Ligand stick radius (Å)", 0.08, 0.30, 0.16, 0.01)
     pocket_radius = st.slider("Pocket residue stick radius (Å)", 0.06, 0.24, 0.10, 0.01)
-    label_limit = st.slider("Maximum residue labels", 3, 35, 10)
-    pocket_only = st.checkbox("Pocket-focus cartoon", True)
+    label_limit = st.slider("Maximum residue labels", 3, 35, 9)
+    pocket_only = st.checkbox("Continuous protein cartoon (reference style)", True)
+    rotation_x = st.slider("Camera tilt X (degrees)", -180, 180, 0, 10)
+    rotation_y = st.slider("Camera turn Y (degrees)", -180, 180, 0, 10)
+    rotation_z = st.slider("Camera roll Z (degrees)", -180, 180, 0, 10)
     preserve_elements = st.checkbox("Element colors for ligand O/N/S", True)
     label_offset = st.slider("Label outward offset (Å)", 0.0, 4.0, 1.5, 0.25)
     contact_radius = st.slider("Interaction dash thickness", 0.035, 0.14, 0.075, 0.005)
@@ -175,6 +178,9 @@ payload = {
     "labelLimit": label_limit,
     "contactRadius": contact_radius,
     "pocketOnly": pocket_only,
+    "rotationX": rotation_x,
+    "rotationY": rotation_y,
+    "rotationZ": rotation_z,
     "preserveElements": preserve_elements,
     "labelOffset": label_offset,
 }
@@ -202,13 +208,8 @@ viewer=$3Dmol.createViewer(el,{backgroundColor:D.background,antialias:true});
 const protein=viewer.addModel(D.pdb,'pdb');
 const atoms=protein.selectedAtoms({});
 if(!atoms.length)throw Error('PDB could not be parsed by 3Dmol.js.');
-protein.setStyle({},{cartoon:{color:D.proteinColor,opacity:D.pocketOnly?0.15:D.cartoonOpacity,style:'oval',arrows:true}});
-if(D.pocketOnly) {
-  for(const entry of D.residues){
-    const [chain,number,resn]=entry.split(':');
-    viewer.addStyle({chain,resi:parseInt(number,10),resn},{cartoon:{color:D.proteinColor,opacity:0.95,style:'oval',arrows:true}});
-  }
-}
+// Keep a single continuous backbone ribbon: per-residue cartoon restyling caused detached green blades.
+protein.setStyle({},{cartoon:{color:D.proteinColor,opacity:D.cartoonOpacity,style:'oval',arrows:true}});
 const elementColors={O:'#ec3030',N:'#365ae0',S:'#d8b036',P:'#e6a346',F:'#61a944'};
 const bits=String(D.selected).split(':');
 const sel={chain:bits[0],resi:parseInt(bits[1],10),resn:bits[2]};
@@ -270,8 +271,12 @@ function focus(){
     const diameter=Math.max(...max.map((x,i)=>x-min[i]),12);
     // Standard 3Dmol zoomTo uses an atom selection and avoids invalid coordinate selectors.
     viewer.zoomTo(D.ligandText?{model:ligand.getID()}:sel);
-    viewer.zoom(D.zoomFactor);
+    viewer.zoom(Math.min(1.4, D.zoomFactor));
   }else viewer.zoomTo();
+  // Explicit camera orientation controls allow reproducible composition.
+  if(D.rotationX)viewer.rotate(D.rotationX,'x');
+  if(D.rotationY)viewer.rotate(D.rotationY,'y');
+  if(D.rotationZ)viewer.rotate(D.rotationZ,'z');
   viewer.render();
 }
 focus();
