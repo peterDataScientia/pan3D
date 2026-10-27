@@ -1,33 +1,31 @@
-# Pan3D — Protein–Ligand 3D Figure Studio
+# Pan3D — Streamlit Protein–Ligand 3D Figure Studio
 
-Browser-based prototype for interactive binding-site illustrations.
+Pan3D is a **Streamlit** web app for interactive protein–ligand binding site figures.
 
-## Current features
-- Load a complex PDB or protein PDB with an aligned ligand in SDF, MOL2, or PDB format.
-- Detect nonstandard HETATM ligands in a complex.
-- Render protein cartoon, ligand sticks, nearby residue sticks and labels.
-- Find residues within an adjustable distance cutoff.
-- Show **candidate N/O proximity lines** at 2.2–3.5 Å (not verified hydrogen bonds).
-- Configure colors, rotate/zoom and export a PNG.
+## Run locally
 
-## Run
-Open `index.html` in a modern browser with an internet connection. The app loads 3Dmol.js from its CDN. Molecular files are read locally in the browser.
-
-You may also serve the directory locally:
-```sh
-python -m http.server 8000
+```bash
+pip install -r requirements.txt
+streamlit run app.py
 ```
-Then visit http://localhost:8000.
 
-## Scientific limitations
-- The first version is a **prototype**, not a validated molecular interaction profiler.
-- Proximity lines do not evaluate donor/acceptor chemistry or angular geometry; do not label them as experimentally validated hydrogen bonds.
-- When using a separate ligand file, its coordinates must be in the same frame as the protein.
-- SVG/PDF export, publication-grade ray tracing, PLIP interaction classification, draggable residue labels and server-side PyMOL rendering are planned, not implemented.
-- Test the rendering and exported graphics with real complexes before publication.
+## Deploy with Streamlit Community Cloud
 
-## Roadmap
-1. PLIP-backed hydrogen bonds, hydrophobic contacts, salt bridges, pi interactions and validation.
-2. Interactive label placement, interaction filtering and precise styling.
-3. Publication-quality image export via PyMOL, plus vector/PDF outputs.
-4. Quality assurance test set across complexes and input formats.
+1. Visit https://share.streamlit.io/ and connect GitHub.
+2. Select repository `peterDataScientia/pan3D`, branch `main`.
+3. Set **Main file path** to `app.py` and deploy.
+
+## Features in v0.2
+
+- Upload complex PDB and optional spatially aligned ligand SDF/MOL/MOL2.
+- Choose the HETATM ligand, visualize the 3D protein cartoon and ligand sticks.
+- Detect residues within a selectable radius.
+- Show pocket sticks and residue labels.
+- Show **candidate N/O contacts** using distance only (NOT validated hydrogen bonds).
+- Choose colors, rotate/zoom and export basic PNG from the embedded viewer.
+
+## Limits
+
+This is a first Streamlit prototype, not a fully validated publication-quality renderer. The dashed lines use proximity only; PLIP-backed contacts, draggable labels, ray-traced resolution-controlled images, PDF and SVG export are not implemented. A browser internet connection is required to load 3Dmol.js. Separate ligand files must have coordinates aligned with the protein.
+
+The earlier static `index.html` remains as a legacy prototype; **`app.py` is the supported Streamlit entrypoint**.
