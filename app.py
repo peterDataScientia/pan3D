@@ -9,7 +9,7 @@ from scipy.spatial import cKDTree
 
 st.set_page_config(page_title="Pan3D | Protein–Ligand Figure Studio", page_icon="🧬", layout="wide")
 st.title("Pan3D · Protein–Ligand Figure Studio")
-st.caption("Streamlit molecular figure editor · 3Dmol.js renderer · v0.3")
+st.caption("Streamlit molecular figure editor · 3Dmol.js renderer · v0.5")
 
 AMINO = set("ALA ARG ASN ASP CYS GLU GLN GLY HIS ILE LEU LYS MET PHE PRO SER THR TRP TYR VAL MSE".split())
 WATER = {"HOH", "WAT", "DOD"}
@@ -88,7 +88,12 @@ with st.sidebar:
     st.header("3 · Figure style")
     figure_mode = st.toggle("Publication figure mode", value=True)
     label_size = st.slider("Residue label size", 10, 24, 16)
-    zoom_factor = st.slider("Camera zoom", 0.7, 2.5, 1.25, 0.05)
+    zoom_factor = st.slider("Camera zoom", 0.65, 2.0, 0.95, 0.05)
+    cartoon_opacity = st.slider("Protein cartoon opacity", 0.1, 1.0, 0.42, 0.05)
+    ligand_radius = st.slider("Ligand stick radius (Å)", 0.08, 0.30, 0.16, 0.01)
+    pocket_radius = st.slider("Pocket residue stick radius (Å)", 0.06, 0.24, 0.10, 0.01)
+    label_limit = st.slider("Maximum residue labels", 3, 35, 12)
+    contact_radius = st.slider("Interaction dash thickness", 0.035, 0.14, 0.075, 0.005)
     export_scale = st.select_slider("PNG export scale", options=[1, 2, 3], value=2)
     st.caption("Final PNG is browser-rendered, not PyMOL ray-traced.")
     protein_color = st.color_picker("Protein cartoon", "#75BE87")
@@ -142,6 +147,11 @@ payload = {
     "labelSize": label_size,
     "zoomFactor": zoom_factor,
     "exportScale": export_scale,
+    "cartoonOpacity": cartoon_opacity,
+    "ligandRadius": ligand_radius,
+    "pocketRadius": pocket_radius,
+    "labelLimit": label_limit,
+    "contactRadius": contact_radius,
 }
 blob = json.dumps(payload).replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
 html = """
@@ -167,25 +177,25 @@ viewer=$3Dmol.createViewer(el,{backgroundColor:D.background,antialias:true});
 const protein=viewer.addModel(D.pdb,'pdb');
 const atoms=protein.selectedAtoms({});
 if(!atoms.length)throw Error('PDB could not be parsed by 3Dmol.js.');
-protein.setStyle({},{cartoon:{color:D.proteinColor,opacity:0.95,style:'oval',arrows:true}});
+protein.setStyle({},{cartoon:{color:D.proteinColor,opacity:D.cartoonOpacity,style:'oval',arrows:true}});
 const bits=String(D.selected).split(':');
 const sel={chain:bits[0],resi:parseInt(bits[1],10),resn:bits[2]};
 let ligand=protein;
 if(D.ligandText){
   ligand=viewer.addModel(D.ligandText,D.ligandFormat==='mol2'?'mol2':'sdf');
   if(!ligand.selectedAtoms({}).length)throw Error('External ligand has no 3D atoms.');
-  ligand.setStyle({},{stick:{radius:0.24,color:D.ligandColor}});
+  ligand.setStyle({},{stick:{radius:D.ligandRadius,color:D.ligandColor}});
 }else{
   if(!protein.selectedAtoms(sel).length)throw Error('Selected ligand not found: '+D.selected);
   // SetStyle on model is supported; addStyle belongs to the VIEWER.
   viewer.addStyle(sel,{stick:{radius:0.24,color:D.ligandColor}});
 }
 const labels=[];
-for(const entry of D.residues){
+for(const entry of D.residues.slice(0,D.labelLimit)){
   const [chain,num,resn]=entry.split(':');
   const resi=parseInt(num,10);
   const rsel={chain,resi,resn};
-  if(D.showResidues)viewer.addStyle(rsel,{stick:{radius:0.125}});
+  if(D.showResidues)viewer.addStyle(rsel,{stick:{radius:D.pocketRadius}});
   if(D.showLabels){
     const a=atoms.find(t=>t.chain===chain && t.resi===resi && t.resn===resn && t.atom==='CA') ||
             atoms.find(t=>t.chain===chain && t.resi===resi && t.resn===resn);
@@ -200,12 +210,30 @@ font:'Arial',fontSize:D.labelSize,fontColor:'#101d28',bold:true,
 backgroundOpacity:0,borderOpacity:0,inFront:true
 });
 for(const c of D.contacts){
-  viewer.addLine({start:c.start,end:c.end,color:D.contactColor,dashed:true,linewidth:2});
+  // Spheres + short cylinders make dashed proximity contacts visible in 3D and in PNG exports.
+  const a=c.start,b=c.end,dx=b.x-a.x,dy=b.y-a.y,dz=b.z-a.z;
+  const length=Math.sqrt(dx*dx+dy*dy+dz*dz);if(length<0.001)continue;
+  const segments=Math.floor(length/0.35);
+  for(let j=0;j<segments;j+=2){
+    const start=j/segments,end=Math.min((j+1)/segments,1);
+    const at=t=>({x:a.x+t*dx,y:a.y+t*dy,z:a.z+t*dz});
+    viewer.addCylinder({start:at(start),end:at(end),radius:D.contactRadius,color:D.contactColor,fromCap:1,toCap:1});
+  }
 }
 function focus(){
-  if(D.ligandText)viewer.zoomTo({model:ligand.getID()});
-  else viewer.zoomTo(sel);
-  viewer.zoom(D.zoomFactor);
+  // Fit ligand and its surrounding pocket using coordinate bounds instead of excessive ligand-only zoom.
+  const ligandPoints=D.ligandCoordinates||[];
+  const nearAtoms=atoms.filter(a=>D.residues.some(r=>{const [ch,num,name]=r.split(':');return a.chain===ch&&a.resi===parseInt(num,10)&&a.resn===name;}));
+  const points=ligandPoints.concat(nearAtoms);
+  if(points.length){
+    const min=[Infinity,Infinity,Infinity],max=[-Infinity,-Infinity,-Infinity];
+    points.forEach(p=>{[p.x,p.y,p.z].forEach((v,i)=>{min[i]=Math.min(min[i],v);max[i]=Math.max(max[i],v)})});
+    const center={x:(min[0]+max[0])/2,y:(min[1]+max[1])/2,z:(min[2]+max[2])/2};
+    const diameter=Math.max(...max.map((x,i)=>x-min[i]),12);
+    viewer.setCameraParameters({fov:35});
+    viewer.zoomTo();viewer.center(center);
+    viewer.zoom(Math.min(3,Math.max(0.5,40/diameter))*D.zoomFactor);
+  }else viewer.zoomTo();
   viewer.render();
 }
 focus();
