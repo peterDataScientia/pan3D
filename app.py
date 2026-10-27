@@ -86,6 +86,11 @@ with st.sidebar:
     show_labels = st.checkbox("Residue labels", True)
     show_contacts = st.checkbox("Candidate N/O contacts", True)
     st.header("3 · Figure style")
+    figure_mode = st.toggle("Publication figure mode", value=True)
+    label_size = st.slider("Residue label size", 10, 24, 16)
+    zoom_factor = st.slider("Camera zoom", 0.7, 2.5, 1.25, 0.05)
+    export_scale = st.select_slider("PNG export scale", options=[1, 2, 3], value=2)
+    st.caption("Final PNG is browser-rendered, not PyMOL ray-traced.")
     protein_color = st.color_picker("Protein cartoon", "#75BE87")
     ligand_color = st.color_picker("Ligand sticks", "#E66EBC")
     contact_color = st.color_picker("Contact dashes", "#D6B400")
@@ -133,67 +138,98 @@ payload = {
     "contactColor": contact_color,
     "background": bg_color,
     "ligandCoordinates": ligand_atoms,
+    "figureMode": figure_mode,
+    "labelSize": label_size,
+    "zoomFactor": zoom_factor,
+    "exportScale": export_scale,
 }
 blob = json.dumps(payload).replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
 html = """
-<div style="font:12px sans-serif;color:#64748b;padding:4px">Drag to rotate · Scroll to zoom · Right drag to pan</div>
-<div id="viewer" style="height:640px;width:100%;position:relative;background:#eef3f6;border:1px solid #cbd5e1"></div>
-<div style="margin:9px 0"><button id="reset">Recenter</button> <button id="export">Export PNG</button> <span id="msg" style="margin-left:10px;color:#64748b"></span></div>
-<script src="https://3Dmol.org/build/3Dmol-min.js" onerror="document.getElementById('msg').textContent='3Dmol CDN loading failed; check network';"></script>
+<style>
+body{font-family:Arial,Helvetica,sans-serif;background:#f8fafc;color:#344456;margin:0}
+#scene{width:100%;height:620px;position:relative;background:white;border:1px solid #d7e2e9;border-radius:8px}
+#status{padding:9px;font-size:12px;color:#526579;white-space:pre-line}
+button{margin:8px 8px 0 0;padding:10px 15px;border:0;border-radius:7px;background:#17649b;color:white;cursor:pointer}
+</style>
+<div id="scene"></div>
+<button id="reset">Focus binding pocket</button><button id="export">Export PNG</button>
+<div id="status">Loading figure engine…</div>
 <script>
-const data = __DATA__;
-const msg = document.getElementById('msg');
-window.addEventListener('error', e => {msg.textContent='Pan3D rendering error: '+e.message;msg.style.color='crimson';});
-if (typeof $3Dmol === 'undefined') { msg.textContent = '3Dmol.js failed to load. Check network or browser extensions.'; }
-else {
-  try {
-  msg.textContent = 'Loading PDB atoms into 3D viewer...';
-  const viewer = $3Dmol.createViewer(document.getElementById('viewer'), {backgroundColor: data.background, antialias:true});
-  const model = viewer.addModel(data.pdb, 'pdb');
-  if (!model.selectedAtoms({}).length) throw new Error('3Dmol could not read PDB atoms');
-  model.setStyle({}, {cartoon:{color:data.proteinColor}});
-  let ligandModel = model, selection = {};
-  if (data.ligandText) {
-    ligandModel = viewer.addModel(data.ligandText, data.ligandFormat === 'mol2' ? 'mol2' : 'sdf');
-  } else {
-    const parts = data.selected.split(':');
-    // PDB style targets hetero residue by chain and residue number.
-    selection = {chain:parts[0], resi:parseInt(parts[1], 10), resn:parts[2]};
-  }
-  if (data.showResidues) {
-    for (const entry of data.residues) {
-      const parts = entry.split(':');
-      viewer.addStyle({chain:parts[0],resi:parseInt(parts[1],10),resn:parts[2]}, {stick:{radius:0.14}});
-    }
-  }
-  if (data.ligandText) ligandModel.setStyle({}, {stick:{radius:0.22,color:data.ligandColor}});
-  else viewer.addStyle(selection, {stick:{radius:0.22,color:data.ligandColor}});
-  if (data.showLabels) {
-    const atoms = model.selectedAtoms({});
-    for (const entry of data.residues) {
-      const parts = entry.split(':');
-      const a = atoms.find(x=>x.chain===parts[0] && x.resi===parseInt(parts[1],10) && x.resn===parts[2] && x.atom==='CA');
-      if(a) viewer.addLabel(parts[2]+parts[1], {position:{x:a.x,y:a.y,z:a.z},fontSize:13,fontColor:'#14213d',backgroundOpacity:0,inFront:true});
-    }
-  }
-  for (const c of data.contacts) viewer.addCylinder({start:c.start,end:c.end,color:data.contactColor,radius:0.055,dashed:true});
-  function center() {
-    if (data.ligandText) viewer.zoomTo({model:ligandModel});
-    else viewer.zoomTo(selection);
-    viewer.zoom(0.75); viewer.render();
-  }
-  center();
-  msg.textContent = 'Loaded: '+model.selectedAtoms({}).length+' atoms. Rotate the structure using your mouse.';
-  document.getElementById('reset').onclick=center;
-  document.getElementById('export').onclick=()=>{
-    try {
-      const a=document.createElement('a');
-      a.href=viewer.pngURI();a.download='Pan3D_binding_site.png';
-      document.body.appendChild(a);a.click();a.remove();
-    }catch(e){msg.textContent='PNG export failed: '+e.message;}
-  };
-  } catch(error) { msg.textContent='Pan3D rendering error: '+error.message;msg.style.color='crimson';console.error(error); }
+const D=__DATA__;
+const el=document.getElementById('scene'),status=document.getElementById('status');
+let viewer;
+function say(t,bad=false){status.textContent=t;status.style.color=bad?'#b42332':'#526579';}
+window.addEventListener('error', e=>say('Pan3D rendering error: '+e.message,true));
+function run(){
+try{
+if(!window.$3Dmol)throw Error('3Dmol.js failed to load (CDN/network).');
+viewer=$3Dmol.createViewer(el,{backgroundColor:D.background,antialias:true});
+const protein=viewer.addModel(D.pdb,'pdb');
+const atoms=protein.selectedAtoms({});
+if(!atoms.length)throw Error('PDB could not be parsed by 3Dmol.js.');
+protein.setStyle({},{cartoon:{color:D.proteinColor,opacity:0.95,style:'oval',arrows:true}});
+const bits=String(D.selected).split(':');
+const sel={chain:bits[0],resi:parseInt(bits[1],10),resn:bits[2]};
+let ligand=protein;
+if(D.ligandText){
+  ligand=viewer.addModel(D.ligandText,D.ligandFormat==='mol2'?'mol2':'sdf');
+  if(!ligand.selectedAtoms({}).length)throw Error('External ligand has no 3D atoms.');
+  ligand.setStyle({},{stick:{radius:0.24,color:D.ligandColor}});
+}else{
+  if(!protein.selectedAtoms(sel).length)throw Error('Selected ligand not found: '+D.selected);
+  // SetStyle on model is supported; addStyle belongs to the VIEWER.
+  viewer.addStyle(sel,{stick:{radius:0.24,color:D.ligandColor}});
 }
+const labels=[];
+for(const entry of D.residues){
+  const [chain,num,resn]=entry.split(':');
+  const resi=parseInt(num,10);
+  const rsel={chain,resi,resn};
+  if(D.showResidues)viewer.addStyle(rsel,{stick:{radius:0.125}});
+  if(D.showLabels){
+    const a=atoms.find(t=>t.chain===chain && t.resi===resi && t.resn===resn && t.atom==='CA') ||
+            atoms.find(t=>t.chain===chain && t.resi===resi && t.resn===resn);
+    if(a){
+      labels.push({name:resn+num,at:a});
+    }
+  }
+}
+for(const label of labels)viewer.addLabel(label.name,{
+position:{x:label.at.x,y:label.at.y,z:label.at.z},
+font:'Arial',fontSize:D.labelSize,fontColor:'#101d28',bold:true,
+backgroundOpacity:0,borderOpacity:0,inFront:true
+});
+for(const c of D.contacts){
+  viewer.addLine({start:c.start,end:c.end,color:D.contactColor,dashed:true,linewidth:2});
+}
+function focus(){
+  if(D.ligandText)viewer.zoomTo({model:ligand.getID()});
+  else viewer.zoomTo(sel);
+  viewer.zoom(D.zoomFactor);
+  viewer.render();
+}
+focus();
+document.getElementById('reset').onclick=focus;
+document.getElementById('export').onclick=()=>{
+try{
+ // Temporarily upscale render target; restore viewer dimensions after export.
+ const scale=D.exportScale||1;
+ const oldW=el.clientWidth, oldH=el.clientHeight;
+ if(scale>1){el.style.width=(oldW*scale)+'px';el.style.height=(oldH*scale)+'px';viewer.resize();viewer.render();}
+ const url=viewer.pngURI();
+ if(scale>1){el.style.width='100%';el.style.height='620px';viewer.resize();viewer.render();}
+ const link=document.createElement('a');link.href=url;link.download='Pan3D_figure_'+scale+'x.png';
+ document.body.appendChild(link);link.click();link.remove();
+ say('PNG export generated ('+scale+'× canvas). Verify final figure resolution.');
+}catch(e){el.style.width='100%';el.style.height='620px';viewer.resize();viewer.render();say('Export error: '+e.message,true);}
+};
+say('Rendered '+atoms.length+' atoms · '+D.residues.length+' pocket residues · '+D.contacts.length+' candidate polar contacts. Note: contacts are distance candidates, not PLIP validated.');
+}catch(err){say('Pan3D rendering error: '+err.message,true);console.error(err);}
+}
+const script=document.createElement('script');
+script.src='https://3Dmol.org/build/3Dmol-min.js';script.onload=run;
+script.onerror=()=>{script.src='https://cdn.jsdelivr.net/npm/3dmol@2.5.3/build/3Dmol-min.js';script.onerror=()=>say('Unable to load rendering library from either CDN.',true);script.onload=run;};
+document.head.appendChild(script);
 </script>
 """.replace("__DATA__", blob)
 components.html(html, height=730, scrolling=False)
